@@ -1,65 +1,101 @@
 import streamlit as st
 import base64
-# We need the io module to handle the image data in memory
 import io 
-from openai import OpenAI, APIError
+import json
 
 # Set page configuration for a wide layout
 st.set_page_config(layout="wide")
-st.title("🎬 AI Storyboard Generator (DALL-E 3)")
-st.markdown("Generate cinematic storyboard frames using OpenAI DALL·E 3")
+st.title("🎬 AI Storyboard Generator (Free Tool)")
+st.markdown("Generate cinematic storyboard frames using the **Imagen 3.0** model.")
 
-# --- CONFIGURATION ---
-# Try to get key from Streamlit Secrets
-try:
-    OPENAI_KEY = st.secrets["OPENAI_API_KEY"]
-except Exception:
-    OPENAI_KEY = None
+# --- CONFIGURATION & API SETUP (FREE TOOL) ---
 
-if not OPENAI_KEY:
-    st.error("""
-        🚨 **API Key Missing**
+# We define the API call logic entirely in a JavaScript function, as required 
+# by the environment for tool access.
 
-        This app needs your OpenAI API key to work.
-        If running locally, create a `.streamlit/secrets.toml` file with:
+# Note: The API Key (if needed) and Model URL are handled automatically 
+# by the environment when using the dedicated endpoint.
 
-        ```toml
-        [general]
-        OPENAI_API_KEY = "sk-your-key-here"
-        ```
+JS_API_CALL_FUNCTION = """
+async function generateImage(prompt, size) {
+    const apiKey = ""; // API Key is automatically provided by the environment
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
+    
+    // Size mapping for Imagen 3.0
+    let width = 1024;
+    let height = 1024;
+    if (size === '1792x1024') {
+        width = 1792;
+        height = 1024;
+    } else if (size === '1024x1792') {
+        width = 1024;
+        height = 1792;
+    }
 
-        On Streamlit Cloud, go to **Settings → Secrets** and add:
-        ```
-        OPENAI_API_KEY = sk-your-key-here
-        ```
-    """)
-    st.stop()
+    const payload = { 
+        instances: [{ prompt: prompt }], 
+        parameters: { 
+            "sampleCount": 1,
+            "aspectRatio": `${width}:${height}`
+        } 
+    };
 
-# Initialize client
-client = OpenAI(api_key=OPENAI_KEY)
+    try {
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
 
-# Use the correct DALL-E 3 model name
-model_name = "dall-e-3"
+        const result = await response.json();
+        
+        if (result.predictions && result.predictions.length > 0 && result.predictions[0].bytesBase64Encoded) {
+            // Success: return the base64 image data
+            return { success: true, data: result.predictions[0].bytesBase64Encoded };
+        } else if (result.error) {
+            // API returned an error object
+            return { success: false, error: result.error.message || 'Unknown API error during generation.' };
+        } else {
+            // Unexpected response structure
+            return { success: false, error: 'Image generation failed with an unexpected response structure.' };
+        }
+
+    } catch (e) {
+        // Network or fetch error
+        return { success: false, error: e.message || 'Network error during API call.' };
+    }
+}
+"""
+
+# Inject the JavaScript function into the Streamlit app
+st.components.v1.html(f"<script>{JS_API_CALL_FUNCTION}</script>", height=0, width=0)
 
 # --- SIDEBAR INPUTS ---
 st.sidebar.header("Scene Setup")
+
+image_size_option = st.sidebar.selectbox(
+    "Select Aspect Ratio (Imagen 3.0)",
+    ["1024x1024 (Square)", "1792x1024 (Wide 16:9)", "1024x1792 (Tall 9:16)"],
+    index=1 # Defaulting to cinematic wide view
+)
 base_prompt = st.sidebar.text_area(
     "Core Scene Prompt (for Visual Consistency)",
-    "A dark fantasy forest at night, detailed bioluminescent plants, cinematic lighting, style of a concept art painting."
+    "A majestic, bioluminescent forest at night, cinematic studio lighting, highly detailed concept art style."
 )
-num_shots = st.sidebar.slider("Number of Shots (DALL-E 3 Max is 4)", 2, 4, 3)
+num_shots = st.sidebar.slider("Number of Shots", 1, 4, 3) # Max 4 for layout consistency
 
 # --- SHOT INPUTS ---
 shot_details = []
 st.header("Define Individual Shots")
 cols = st.columns(num_shots)
-IMAGE_SIZE = "1024x1024"
+
+IMAGE_SIZE = image_size_option.split(" ")[0] 
 
 default_details = [
-    "A lonely traveler standing by a twisted ancient tree, looking nervous.",
-    "Close up shot of the traveler's lantern illuminating a strange, glowing mushroom.",
-    "Wide shot showing the path ahead disappearing into a thick, magical mist.",
-    "A sudden movement: a pair of glowing eyes peeking from the shadows."
+    "A lonely traveler standing by a twisted ancient tree, looking nervous. Medium shot.",
+    "Close up shot of the traveler's hand holding a strange, glowing, iridescent orb.",
+    "Wide shot showing the path ahead disappearing into a thick, magical mist, cinematic view.",
+    "A sudden movement: a pair of glowing yellow eyes peeking from the shadows. Extreme close up."
 ]
 
 for i in range(num_shots):
@@ -73,7 +109,7 @@ for i in range(num_shots):
         )
         angle = st.selectbox(
             f"Camera Angle for Shot {i+1}",
-            ["Medium Shot", "Close Up", "Wide Shot", "High Angle", "Low Angle"],
+            ["Medium Shot", "Close Up", "Wide Shot", "High Angle", "Low Angle", "Extreme Close Up"],
             key=f"angle_{i}"
         )
         shot_details.append({"details": details, "angle": angle})
@@ -85,66 +121,98 @@ if st.button("✨ Generate Storyboard"):
         st.stop()
 
     st.subheader("Generated Storyboard")
-    # Placeholder for the generated images and captions
     output_cols = st.columns(num_shots)
 
-    with st.spinner("Generating Storyboard..."):
-        for i, shot in enumerate(shot_details):
-            if not shot['details']:
-                with output_cols[i]:
-                    st.warning(f"Skipping Shot {i+1}: No details provided.")
-                continue
-
-            # Comprehensive prompt designed for cinematic consistency
-            full_prompt = (
-                f"A professional cinematic storyboard frame: {shot['details']}, {shot['angle']} view. "
-                f"The entire scene setting is: {base_prompt}. "
-                "Cinematic, high detail, black and white style, drawn with thin lines, consistent style, simple composition, no complex coloring, no text overlays, focus on action/framing."
-            )
-
-            try:
-                # DALL-E 3 API call
-                response = client.images.generate(
-                    model=model_name,
-                    prompt=full_prompt,
-                    # Using 'standard' quality for a balance of speed, cost, and detail
-                    quality="standard", 
-                    size=IMAGE_SIZE,
-                    n=1,
-                    response_format="b64_json",
+    # Use a shared state for loading across all shots
+    with st.spinner("Generating Storyboard (This may take up to 30 seconds per image)..."):
+        
+        # --- Asynchronous JavaScript Execution ---
+        
+        # 1. Prepare all prompts and sizes in a list
+        prompts_to_generate = []
+        for shot in shot_details:
+            if shot['details']:
+                full_prompt = (
+                    f"A highly detailed, professional cinematic storyboard sketch in black and white. {shot['details']}, {shot['angle']} view. "
+                    f"Scene setting: {base_prompt}. "
+                    "Focus on composition and lighting, thin line art, no text overlays, consistent style."
                 )
+                prompts_to_generate.append({
+                    'prompt': full_prompt,
+                    'size': IMAGE_SIZE
+                })
 
-                # Decode the base64 image data
-                image_bytes = base64.b64decode(response.data[0].b64_json)
+        # 2. Convert the Python list to a JSON string for JavaScript
+        prompts_json = json.dumps(prompts_to_generate)
+        
+        # 3. Create the JavaScript execution block
+        js_execution = f"""
+        const prompts = JSON.parse('{prompts_json}');
+        const results = [];
+        
+        for (const p of prompts) {{
+            const result = await generateImage(p.prompt, p.size);
+            results.push(result);
+        }}
+        
+        // This is the output sent back to Streamlit
+        return JSON.stringify(results);
+        """
+        
+        # 4. Execute the JavaScript code and get the results
+        try:
+            results_json = st.components.v1.html(
+                f"<script>{js_execution}</script>", 
+                height=1, 
+                width=1, 
+                scrolling=False,
+                key="js_runner"
+            )
+            
+            # The component call returns a string which is the output of the script
+            if results_json:
+                results = json.loads(results_json)
+            else:
+                st.error("Error: Could not retrieve results from the JavaScript execution.")
+                st.stop()
+
+        except Exception as e:
+            st.error(f"Critical execution error: {str(e)}")
+            st.stop()
+
+        # --- Display Results ---
+
+        # The results list contains success/failure objects for each attempted shot
+        for i, result in enumerate(results):
+            shot = shot_details[i] # Get original shot details
+            
+            # Get the column corresponding to the shot
+            with output_cols[i]:
                 
-                # *** CHANGE: Wrap image bytes in BytesIO object for safe display ***
-                image_data_io = io.BytesIO(image_bytes)
-
-
-                with output_cols[i]:
+                if result['success']:
+                    # Image Data Processing
+                    image_bytes = base64.b64decode(result['data'])
+                    image_data_io = io.BytesIO(image_bytes)
+                    
                     st.image(image_data_io, caption=f"Shot {i+1}", use_column_width=True)
                     st.caption(f"**Camera:** {shot['angle']} | **Details:** {shot['details']}")
-                    with st.expander("Show Prompt"):
-                        st.code(full_prompt, language="text")
                     
-            except APIError as e:
-                with output_cols[i]:
-                    st.error(f"OpenAI API Error (Shot {i+1}): {str(e)}")
-                    with st.expander("Prompt that failed"):
-                        st.code(full_prompt, language="text")
+                else:
+                    # Error Display
+                    st.error(f"❌ Shot {i+1} Failed: {result['error']}")
+                    st.caption(f"**Camera:** {shot['angle']} | **Details:** {shot['details']}")
+                    
+                # Display the full prompt used for debugging
+                full_prompt = (
+                    f"A professional cinematic storyboard sketch in black and white. {shot['details']}, {shot['angle']} view. "
+                    f"Scene setting: {base_prompt}. "
+                    "Focus on composition and lighting, thin line art, no text overlays, consistent style."
+                )
+                with st.expander("Show Prompt"):
+                    st.code(full_prompt, language="text")
 
-            except Exception as e:
-                with output_cols[i]:
-                    st.error(f"General Error (Shot {i+1}): {str(e)}")
-                    with st.expander("Prompt that failed"):
-                        st.code(full_prompt, language="text")
-
-
-# --- IMPROVED PROMPT HINT ---
+# --- HINT ---
 st.markdown("---")
 st.markdown("""
-    💡 **Prompting Tip for Storyboards:**
-    I've added a few terms to the prompt for you to enhance the storyboard look:
-    `professional cinematic storyboard frame`, `black and white style, drawn with thin lines`, and `simple composition`. 
-    This encourages DALL-E 3 to focus on framing rather than photorealism.
+    💡 **Note:** This version uses the **free** Imagen 3.0 model, eliminating the API key and billing issues we faced previously. Generation may take longer than DALL·E 3 (up to 30 seconds per image).
 """)
