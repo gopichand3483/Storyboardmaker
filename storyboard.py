@@ -1,8 +1,8 @@
 import streamlit as st
-import io
 import base64
 from openai import OpenAI, APIError
 
+# Set page configuration for a wide layout
 st.set_page_config(layout="wide")
 st.title("🎬 AI Storyboard Generator (DALL-E 3)")
 st.markdown("Generate cinematic storyboard frames using OpenAI DALL·E 3")
@@ -21,7 +21,7 @@ if not OPENAI_KEY:
         This app needs your OpenAI API key to work.
         If running locally, create a `.streamlit/secrets.toml` file with:
 
-        ```
+        ```toml
         [general]
         OPENAI_API_KEY = "sk-your-key-here"
         ```
@@ -35,7 +35,9 @@ if not OPENAI_KEY:
 
 # Initialize client
 client = OpenAI(api_key=OPENAI_KEY)
-model_name = "gpt-image-1"  # safer model alias
+
+# Use the correct DALL-E 3 model name
+model_name = "dall-e-3"
 
 # --- SIDEBAR INPUTS ---
 st.sidebar.header("Scene Setup")
@@ -81,40 +83,62 @@ if st.button("✨ Generate Storyboard"):
         st.stop()
 
     st.subheader("Generated Storyboard")
-    with st.spinner("Generating Storyboard..."):
-        output_cols = st.columns(num_shots)
+    # Placeholder for the generated images and captions
+    output_cols = st.columns(num_shots)
 
+    with st.spinner("Generating Storyboard..."):
         for i, shot in enumerate(shot_details):
             if not shot['details']:
                 with output_cols[i]:
                     st.warning(f"Skipping Shot {i+1}: No details provided.")
                 continue
 
+            # Comprehensive prompt designed for cinematic consistency
             full_prompt = (
-                f"A storyboard frame: {shot['details']}, {shot['angle']} view. "
+                f"A professional cinematic storyboard frame: {shot['details']}, {shot['angle']} view. "
                 f"The entire scene setting is: {base_prompt}. "
-                "Cinematic, high detail, no text overlays, consistent style."
+                "Cinematic, high detail, black and white style, drawn with thin lines, consistent style, simple composition, no complex coloring, no text overlays, focus on action/framing."
             )
 
             try:
+                # DALL-E 3 API call
                 response = client.images.generate(
                     model=model_name,
                     prompt=full_prompt,
+                    # Using 'standard' quality for a balance of speed, cost, and detail
+                    quality="standard", 
                     size=IMAGE_SIZE,
                     n=1,
                     response_format="b64_json",
                 )
 
+                # Decode the base64 image data for Streamlit display
                 image_data = base64.b64decode(response.data[0].b64_json)
 
                 with output_cols[i]:
                     st.image(image_data, caption=f"Shot {i+1}", use_column_width=True)
                     st.caption(f"**Camera:** {shot['angle']} | **Details:** {shot['details']}")
-
+                    with st.expander("Show Prompt"):
+                        st.code(full_prompt, language="text")
+                    
             except APIError as e:
                 with output_cols[i]:
                     st.error(f"OpenAI API Error (Shot {i+1}): {str(e)}")
+                    with st.expander("Prompt that failed"):
+                        st.code(full_prompt, language="text")
 
             except Exception as e:
                 with output_cols[i]:
                     st.error(f"General Error (Shot {i+1}): {str(e)}")
+                    with st.expander("Prompt that failed"):
+                        st.code(full_prompt, language="text")
+
+
+# --- IMPROVED PROMPT HINT ---
+st.markdown("---")
+st.markdown("""
+    💡 **Prompting Tip for Storyboards:**
+    I've added a few terms to the prompt for you to enhance the storyboard look:
+    `professional cinematic storyboard frame`, `black and white style, drawn with thin lines`, and `simple composition`. 
+    This encourages DALL-E 3 to focus on framing rather than photorealism.
+""")
