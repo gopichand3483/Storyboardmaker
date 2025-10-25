@@ -1,5 +1,7 @@
 import streamlit as st
 import base64
+# We need the io module to handle the image data in memory
+import io 
 from openai import OpenAI, APIError
 
 # Set page configuration for a wide layout
@@ -112,11 +114,15 @@ if st.button("✨ Generate Storyboard"):
                     response_format="b64_json",
                 )
 
-                # Decode the base64 image data for Streamlit display
-                image_data = base64.b64decode(response.data[0].b64_json)
+                # Decode the base64 image data
+                image_bytes = base64.b64decode(response.data[0].b64_json)
+                
+                # *** CHANGE: Wrap image bytes in BytesIO object for safe display ***
+                image_data_io = io.BytesIO(image_bytes)
+
 
                 with output_cols[i]:
-                    st.image(image_data, caption=f"Shot {i+1}", use_column_width=True)
+                    st.image(image_data_io, caption=f"Shot {i+1}", use_column_width=True)
                     st.caption(f"**Camera:** {shot['angle']} | **Details:** {shot['details']}")
                     with st.expander("Show Prompt"):
                         st.code(full_prompt, language="text")
